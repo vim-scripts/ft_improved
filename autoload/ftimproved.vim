@@ -1,8 +1,8 @@
 " ftimproved.vim - Better f/t command for Vim
 " -------------------------------------------------------------
-" Version:	   0.3
+" Version:	   0.4
 " Maintainer:  Christian Brabandt <cb@256bit.org>
-" Last Change: Mon, 20 Aug 2012 20:00:21 +0200
+" Last Change: Sun, 09 Sep 2012 14:13:31 +0200
 "
 " Script: 
 " Copyright:   (c) 2009, 2010, 2011, 2012  by Christian Brabandt
@@ -11,7 +11,7 @@
 "			   instead of "Vim".
 "			   No warranty, express or implied.
 "	 *** ***   Use At-Your-Own-Risk!   *** ***
-" GetLatestVimScripts: 3877 3 :AutoInstall: ft_improved.vim
+" GetLatestVimScripts: 3877 4 :AutoInstall: ft_improved.vim
 "
 " Functions:
 let s:cpo= &cpo
@@ -71,17 +71,18 @@ fun! <sid>ColonPattern(cmd, pat, off, f) "{{{1
 	if !exists("s:colon")
 		let s:colon = {}
 	endif
+	let pat = a:pat
+	let cmd = a:cmd
 	let opp = <sid>Opposite(a:cmd[-1:])
 	let opp_off = <sid>Opposite(a:off[0])
-	let cmd = a:cmd
 	if a:cmd == 'f'
 		let cmd = '/'
 	elseif a:cmd == 'F'
 		let cmd = '?'
 	endif
-	let s:colon[';'] = cmd[-1:]. a:pat. 
+	let s:colon[';'] = cmd[-1:]. pat. 
 		\ (empty(a:off) ? cmd[-1:] : a:off)
-	let s:colon[','] = cmd[:-2]. opp. a:pat.
+	let s:colon[','] = cmd[:-2]. opp. pat.
 	    \ (empty(a:off) ? opp : opp_off . a:off[1])
 	let s:colon['cmd'] = a:f
 endfun
@@ -111,15 +112,21 @@ fun! ftimproved#ColonCommand(f, mode) "{{{1
 	endif
 	if res != fcmd
 		try
-			let pat = matchlist(res, '^v\?\([/?]\)\([^/?]*\)\1')
-			if !search(pat[2], (pat[1]=='?' ? 'b' : '').'nW') || 
-				\ <sid>CheckSearchWrap(pat[2], pat[1]!='?', v:count1)
+			let pat = matchlist(res, '^v\?\([/?]\)\(.*\)\1')
+			" ?-search, means, we need to escape '?' in the pattern
+			let spat = pat[2]
+			if pat[1] =~ '[?/]'
+				let pat[2] = escape(pat[2], pat[1])
+				let res = pat[1] . pat[2] . pat[1]
+			endif
+			if !search(spat, (pat[1]=='?' ? 'b' : '').'nW') || 
+				\ <sid>CheckSearchWrap(spat, pat[1]!='?', v:count1)
 				" noop
 				let res = ''
 			endif
 			if pat[1]=='?'
-				let tline = search(pat[2], 'bnW')
-				if tline < line('.') && getline(tline) =~ pat[2].'\$'
+				let tline = search(spat, 'bnW')
+				if tline < line('.') && getline(tline) =~ spat.'\$'
 					" Match is in the last column of a previous line
 					let res = substitute(res, '[/?]\zs[se][+-]$', '', '')
 				endif
@@ -130,7 +137,7 @@ fun! ftimproved#ColonCommand(f, mode) "{{{1
 		endtry
 	endif
 	" Ctrl-C should be a noop
-	let res = (empty(res) ? "" : res."\n")
+	let res = (empty(res) ? s:escape : res."\n")
 	call <sid>DebugOutput(res)
 	return res
 endfun
@@ -191,7 +198,8 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 		"endif
 		let cmd  = op_off[0].cmd
 		let off .= op_off[1]
-		let res  = cmd.pat.off."\n"
+		let pat1  = (a:fwd ? pat : escape(pat, '?'))
+		let res  = cmd.pat1.off."\n"
 	else
 		" Searching using 't' command
 		let cmd  = op_off[0].cmd
@@ -207,7 +215,8 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 			let off .= op_off[1]
 		endif
 
-		let res = cmd.pat.off."\n"
+		let pat1 = (a:fwd ? pat : escape(pat, '?'))
+		let res = cmd.pat1.off."\n"
 	endif
 
 	if <sid>CheckSearchWrap(pat, a:fwd, cnt)
@@ -218,6 +227,7 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 	call <sid>ColonPattern(cmd, pat,
 			\ off. (no_offset ? op_off[1] : ''), a:f)
 
+	let pat = pat1
 	call <sid>DebugOutput(res)
 	return res ":call histdel('/', -1)\n"
 endfun
