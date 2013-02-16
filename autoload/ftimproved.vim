@@ -1,8 +1,8 @@
 " ftimproved.vim - Better f/t command for Vim
 " -------------------------------------------------------------
-" Version:	   0.4
+" Version:	   0.5
 " Maintainer:  Christian Brabandt <cb@256bit.org>
-" Last Change: Sun, 09 Sep 2012 14:13:31 +0200
+" Last Change: Sat, 16 Feb 2013 23:21:31 +0100
 "
 " Script: 
 " Copyright:   (c) 2009, 2010, 2011, 2012  by Christian Brabandt
@@ -11,7 +11,7 @@
 "			   instead of "Vim".
 "			   No warranty, express or implied.
 "	 *** ***   Use At-Your-Own-Risk!   *** ***
-" GetLatestVimScripts: 3877 4 :AutoInstall: ft_improved.vim
+" GetLatestVimScripts: 3877 5 :AutoInstall: ft_improved.vim
 "
 " Functions:
 let s:cpo= &cpo
@@ -173,6 +173,13 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 		call <sid>ColonPattern(<sid>SearchForChar(cmd),
 				\ pat, '', a:f)
 		return s:escape
+	endif
+
+	" ignore case of pattern? Does only work with search, not with original
+	" f/F/t/T commands
+	if exists("g:ft_improved_ignorecase") &&
+				\ g:ft_improved_ignorecase
+		let pat = '\c'.pat
 	endif
 
 	let cnt  = v:count1
