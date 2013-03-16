@@ -1,26 +1,26 @@
 " ftimproved.vim - Better f/t command for Vim
 " -------------------------------------------------------------
-" Version:	   0.5
+" Version:	   0.6
 " Maintainer:  Christian Brabandt <cb@256bit.org>
-" Last Change: Sat, 16 Feb 2013 23:21:31 +0100
+" Last Change: Sat, 16 Mar 2013 14:59:42 +0100
 "
 " Script: 
-" Copyright:   (c) 2009, 2010, 2011, 2012  by Christian Brabandt
+" Copyright:   (c) 2009 - 2013  by Christian Brabandt
 "			   The VIM LICENSE applies to histwin.vim 
 "			   (see |copyright|) except use "ft_improved.vim" 
 "			   instead of "Vim".
 "			   No warranty, express or implied.
 "	 *** ***   Use At-Your-Own-Risk!   *** ***
-" GetLatestVimScripts: 3877 5 :AutoInstall: ft_improved.vim
+" GetLatestVimScripts: 3877 6 :AutoInstall: ft_improved.vim
 "
 " Functions:
 let s:cpo= &cpo
 set cpo&vim
 
-"Debug Mode:
+" Debug Mode:
 let s:debug = 0
 
-let s:escape = ""
+let s:escape = "\e"
 
 fun! <sid>ReturnOperatorOffset(f_mot, fwd, mode) "{{{1
 	" Return list with 2 items
@@ -63,8 +63,8 @@ fun! <sid>SearchForChar(char) "{{{1
 	endif
 endfun
 
-fun! <sid>EscapePat(pat) "{{{1
-	return '\V'.escape(a:pat, '\')
+fun! <sid>EscapePat(pat, vmagic) "{{{1
+	return (a:vmagic ? '\V' : '').escape(a:pat, '\')
 endfun
 
 fun! <sid>ColonPattern(cmd, pat, off, f) "{{{1
@@ -85,6 +85,66 @@ fun! <sid>ColonPattern(cmd, pat, off, f) "{{{1
 	let s:colon[','] = cmd[:-2]. opp. pat.
 	    \ (empty(a:off) ? opp : opp_off . a:off[1])
 	let s:colon['cmd'] = a:f
+endfun
+
+fun! <sid>HighlightMatch(char, dir) "{{{1
+	if exists("s:matchid")
+		sil! call matchdelete(s:matchid)
+	endif
+	let output=''
+	if !empty(a:char)
+		let output = matchstr(a:char, '^\%(\\c\)\?\\V\zs.*')
+		if a:dir
+			let pat = '\%(\%>'. col('.'). 'c\&\%'. line('.'). 'l'
+			let pat .= '\|\%>'. line('.'). 'l\)'. a:char
+		else
+			let pat = '\%(\%<'. col('.'). 'c\&\%'. line('.'). 'l'
+			let pat .= '\|\%<'. line('.'). 'l\)'. a:char
+		endif
+		let s:matchid = matchadd('IncSearch', pat)
+	endif
+	redraw!
+	" Output input string after(!) redraw.
+	if !empty(output)
+		echohl Title
+		exe ':echon '. string(output)
+		echohl Normal
+	endif
+endfu
+fun! <sid>CheckSearchWrap(pat, fwd, cnt) "{{{1
+	" Check, if search would warp around
+	let counter = 1
+	let oldpos  = getpos('.')
+
+	while a:cnt >= counter
+		let line = search(a:pat, (a:fwd ? '' : 'b') .'W')
+		if !line
+			" don't return anything, if the search would wrap around
+			call setpos('.', oldpos)
+			return 1
+		endif
+		let counter+=1
+	endw
+	call setpos('.', oldpos)
+	return 0
+endfun
+
+fun! <sid>Map(lhs, rhs) "{{{1
+	if !hasmapto(a:rhs, 'nxo')
+		for mode in split('nxo', '\zs')
+			exe mode. "noremap <silent> <expr> <unique>" a:lhs
+					\ substitute(a:rhs, 'X', '"'.mode.'"', '')
+		endfor
+	endif
+endfun
+
+fun! <sid>Unmap(lhs) "{{{1
+	"if hasmapto('ftimproved#FTCommand', 'nov')
+	if !empty(maparg(a:lhs, 'nov'))
+		exe "nunmap" a:lhs
+		exe "xunmap" a:lhs
+		exe "ounmap" a:lhs
+	endif
 endfun
 
 fun! ftimproved#ColonCommand(f, mode) "{{{1
@@ -143,136 +203,152 @@ fun! ftimproved#ColonCommand(f, mode) "{{{1
 endfun
 
 fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
-	let char = nr2char(getchar())
-	if  char == s:escape
-		" abort when Escape has been hit
-		return char
-	endif
-	let no_offset = 0
-	let cmd  = (a:fwd ? '/' : '?')
-	let pat  = <sid>EscapePat(char)
-	" Check if normal f/t commands would work:
-	if search(pat, 'nW') == line('.') && a:fwd
-		let s:searchforward = 1
-		let cmd = (a:f ? 'f' : 't')
-		call <sid>ColonPattern(<sid>SearchForChar(cmd),
-				\ pat, '', a:f)
-		return cmd.char
+	try
+		let char = nr2char(getchar())
+		if  char == s:escape
+			" abort when Escape has been hit
+			return char
+		endif
+		let char  = <sid>EscapePat(char, 1)
+		" ignore case of pattern? Does only work with search, not with original
+		" f/F/t/T commands
+		if !get(g:, "ft_improved_ignorecase", 0)
+			let char = '\c'.char
+		endif
+		if get(g:, "ft_improved_multichars", 0)
+			call <sid>HighlightMatch(char, a:fwd)
+			let next = getchar()
+			while !empty(next) && ( next >= 0x20 ||
+				\ ( len(next) == 3 && next[1] == 'k' && next[2] =='b'))
+				" There seems to be a bug, when <bs> is pressed, next should be
+				" equal to kb but it isn't,
+				" therefore, this ugly workaround is needed....
+				if (len(next) == 3 && next[1] == 'k' && next[2] =='b') " <BS>
+					let char = substitute(char, '\%(\\\\\|.\)$', '', '')
+				else
+					let char .= <sid>EscapePat(nr2char(next),0)
+				endif
 
-	elseif search(pat, 'bnw') == line('.') && !a:fwd
-		let s:searchforward = 0
-		let cmd = (a:f ? 'F' : 'T')
-		call <sid>ColonPattern(<sid>SearchForChar(cmd),
-				\ pat, '', a:f)
-		return cmd. char
-
-	" Check if search would wrap
-	elseif (search(pat, 'nW') == 0 && a:fwd) ||
-		\  (search(pat, 'bnW') == 0 && !a:fwd)
-		" return ESC
-		call <sid>ColonPattern(<sid>SearchForChar(cmd),
-				\ pat, '', a:f)
-		return s:escape
-	endif
-
-	" ignore case of pattern? Does only work with search, not with original
-	" f/F/t/T commands
-	if exists("g:ft_improved_ignorecase") &&
-				\ g:ft_improved_ignorecase
-		let pat = '\c'.pat
-	endif
-
-	let cnt  = v:count1
-	let off  = cmd
-	let res  = ''
-	let op_off = <sid>ReturnOperatorOffset(a:f, a:fwd, a:mode)
-	if a:f
-		" Searching using 'f' command
-		"if a:mode == 'o'
-			" There is a strange vi behaviour
-			" Cite from Vim source code:
-			"
-			" * Imitate the strange Vi behaviour: If the delete spans more
-            " * than one line and motion_type == MCHAR and the result is a
-			" * blank line, make the delete linewise. 
-			" * Don't do this for the change command or Visual mode.
-			"if a:mode !~# 'v\|'
-				" Not working correctly in Vim. This looks like a bug:
-				" Message-ID: 20120104185216.GB9668@256bit.org
-				" should be fixed with 7.3.396
-				"let cmd = cnt . 'v' . cmd
-			"endif
-		"endif
-		let cmd  = op_off[0].cmd
-		let off .= op_off[1]
-		let pat1  = (a:fwd ? pat : escape(pat, '?'))
-		let res  = cmd.pat1.off."\n"
-	else
-		" Searching using 't' command
-		let cmd  = op_off[0].cmd
-		" if match is on previous line the last char, don't add offset
-		if !a:fwd
-			let tline=search(pat, 'bnW')
-			if tline < line('.') && getline(tline) !~ pat.'\$'
-				let off .= op_off[1]
-			else
-				let no_offset = 1
+				if char =~# '^\%(\\c\)\?\\V$'
+					" don't highlight empty pattern
+					call <sid>HighlightMatch('', a:fwd)
+				else
+					call <sid>HighlightMatch(char, a:fwd)
+				endif
+				if !search(char, (a:fwd ? '' : 'b'). 'Wn')
+					" Pattern not found, abort
+					return s:escape
+				endif
+				" Get next character
+				let next = getchar()
+			endw
+			if nr2char(next) == s:escape
+				" abort when Escape has been hit
+				return s:escape
 			endif
-		else
+		endif
+		let oldsearchpat = @/
+		let no_offset = 0
+		let cmd = (a:fwd ? '/' : '?')
+		let pat = char
+		if !get(g:, "ft_improved_multichars", 0)
+		" Check if normal f/t commands would work:
+			if search(pat, 'nW') == line('.') && a:fwd
+				let s:searchforward = 1
+				let cmd = (a:f ? 'f' : 't')
+				call <sid>ColonPattern(<sid>SearchForChar(cmd),
+						\ pat, '', a:f)
+				return cmd.char
+
+			elseif search(pat, 'bnw') == line('.') && !a:fwd
+				let s:searchforward = 0
+				let cmd = (a:f ? 'F' : 'T')
+				call <sid>ColonPattern(<sid>SearchForChar(cmd),
+						\ pat, '', a:f)
+				return cmd. char
+			endif
+		endif
+
+		" Check if search would wrap
+		if (search(pat, 'nW') == 0 && a:fwd) ||
+			\  (search(pat, 'bnW') == 0 && !a:fwd)
+			" return ESC
+			call <sid>ColonPattern(<sid>SearchForChar(cmd),
+					\ pat, '', a:f)
+			return s:escape
+		endif
+
+		let cnt  = v:count1
+		let off  = cmd
+		let res  = ''
+		let op_off = <sid>ReturnOperatorOffset(a:f, a:fwd, a:mode)
+		if a:f
+			" Searching using 'f' command
+			"if a:mode == 'o'
+				" There is a strange vi behaviour
+				" Cite from Vim source code:
+				"
+				" * Imitate the strange Vi behaviour: If the delete spans more
+				" * than one line and motion_type == MCHAR and the result is a
+				" * blank line, make the delete linewise. 
+				" * Don't do this for the change command or Visual mode.
+				"if a:mode !~# 'v\|'
+					" Not working correctly in Vim. This looks like a bug:
+					" Message-ID: 20120104185216.GB9668@256bit.org
+					" should be fixed with 7.3.396
+					"let cmd = cnt . 'v' . cmd
+				"endif
+			"endif
+			let cmd  = op_off[0].cmd
 			let off .= op_off[1]
+			let pat1  = (a:fwd ? pat : escape(pat, '?'))
+			let res  = cmd.pat1.off."\<cr>"
+		else
+			" Searching using 't' command
+			let cmd  = op_off[0].cmd
+			" if match is on previous line the last char, don't add offset
+			if !a:fwd
+				let tline=search(pat, 'bnW')
+				if tline < line('.') && getline(tline) !~ pat.'\$'
+					let off .= op_off[1]
+				else
+					let no_offset = 1
+				endif
+			else
+				let off .= op_off[1]
+			endif
+
+			let pat1 = (a:fwd ? pat : escape(pat, '?'))
+			let res = cmd.pat1.off."\<cr>"
 		endif
 
-		let pat1 = (a:fwd ? pat : escape(pat, '?'))
-		let res = cmd.pat1.off."\n"
-	endif
-
-	if <sid>CheckSearchWrap(pat, a:fwd, cnt)
-		let res = s:escape
-	endif
-
-	" save pattern for ';' and ','
-	call <sid>ColonPattern(cmd, pat,
-			\ off. (no_offset ? op_off[1] : ''), a:f)
-
-	let pat = pat1
-	call <sid>DebugOutput(res)
-	return res ":call histdel('/', -1)\n"
-endfun
-
-fun! <sid>CheckSearchWrap(pat, fwd, cnt) "{{{1
-	" Check, if search would warp around
-	let counter = 1
-	let oldpos  = getpos('.')
-
-	while a:cnt >= counter
-		let line = search(a:pat, (a:fwd ? '' : 'b') .'W')
-		if !line
-			" don't return anything, if the search would wrap around
-			call setpos('.', oldpos)
-			return 1
+		if <sid>CheckSearchWrap(pat, a:fwd, cnt)
+			let res = s:escape
 		endif
-		let counter+=1
-	endw
-	call setpos('.', oldpos)
-	return 0
-endfun
 
-fun! <sid>Map(lhs, rhs) "{{{1
-	if !hasmapto(a:rhs, 'nxo')
-		for mode in split('nxo', '\zs')
-			exe mode. "noremap <silent> <expr> <unique>" a:lhs
-					\ substitute(a:rhs, 'X', '"'.mode.'"', '')
-		endfor
-	endif
-endfun
+		" save pattern for ';' and ','
+		call <sid>ColonPattern(cmd, pat,
+				\ off. (no_offset ? op_off[1] : ''), a:f)
 
-fun! <sid>Unmap(lhs) "{{{1
-	"if hasmapto('ftimproved#FTCommand', 'nov')
-	if !empty(maparg(a:lhs, 'nov'))
-		exe "nunmap" a:lhs
-		exe "xunmap" a:lhs
-		exe "ounmap" a:lhs
-	endif
+		let pat = pat1
+		call <sid>DebugOutput(res)
+		if v:operator == 'c'
+			let mode = "\<C-\>\<C-O>"
+		else
+			let mode = "\<C-\>\<C-N>"
+		endif
+		let post_cmd = (a:mode == 'o' ? mode : '').
+			\ ":call histdel('/', -1)\<cr>".
+			\ (a:mode == 'o' ? mode : '').
+			\ ":let @/='". oldsearchpat. "'\<cr>"
+
+		" for operator-pending mappings, don't return the post_cmd, it could
+		" end up in insert mode
+		return res.post_cmd
+		"return res. ":let @/='".oldsearchpat."'\n"
+	finally 
+		call <sid>HighlightMatch('', a:fwd)
+	endtry
 endfun
 
 fun! ftimproved#Activate(enable) "{{{1
