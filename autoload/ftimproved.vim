@@ -1,8 +1,8 @@
 " ftimproved.vim - Better f/t command for Vim
 " -------------------------------------------------------------
-" Version:	   0.7
+" Version:	   0.8
 " Maintainer:  Christian Brabandt <cb@256bit.org>
-" Last Change: Wed, 14 Aug 2013 22:33:14 +0200
+" Last Change: Thu, 27 Mar 2014 23:22:01 +0100
 " Script:  http://www.vim.org/scripts/script.php?script_id=3877
 " Copyright:   (c) 2009 - 2013  by Christian Brabandt
 "			   The VIM LICENSE applies to ft_improved.vim 
@@ -10,7 +10,7 @@
 "			   instead of "Vim".
 "			   No warranty, express or implied.
 "	 *** ***   Use At-Your-Own-Risk!   *** ***
-" GetLatestVimScripts: 3877 7 :AutoInstall: ft_improved.vim
+" GetLatestVimScripts: 3877 8 :AutoInstall: ft_improved.vim
 "
 " Functions:
 let s:cpo= &cpo
@@ -64,7 +64,17 @@ fun! <sid>SearchForChar(char) "{{{1
 endfun
 
 fun! <sid>EscapePat(pat, vmagic) "{{{1
-	return (a:vmagic ? '\V' : '').escape(a:pat, '\''')
+	let pat = escape(a:pat, '\''')
+	if pat ==# ''
+		let pat = '\r'
+	elseif pat ==# '	'
+		let pat = '\t'
+	" elseif pat ==# ''  " Will be skipped anyhow
+	"	let pat = '\e'
+	"
+	" TODO: Other characters to take care of?
+	endif
+	return (a:vmagic ? '\V' : '').pat
 endfun
 
 fun! <sid>ColonPattern(cmd, pat, off, f, fwd) "{{{1
@@ -111,12 +121,12 @@ fun! <sid>HighlightMatch(char, dir) "{{{1
 			let pat = '\%(\%>'. col('.'). 'c\&\%'. line('.'). 'l'
 			let pat .= '\|\%>'. line('.'). 'l\)'. a:char
 			" Make sure, it only matches within the current viewport
-			let pat = '\%('. pat. '\m\)\ze\&\%<'.(line('w$')+1).'l'
+			let pat = '\%('. pat. '\m\)\ze\&\%<'.(line('w$')+1).'l'.a:char
 		else
 			let pat = '\%(\%<'. col('.'). 'c\&\%'. line('.'). 'l'
 			let pat .= '\|\%<'. line('.'). 'l\)'. a:char
 			" Make sure, it only matches within the current viewport
-			let pat = '\%('. pat. '\m\)\ze\&\%>'.(line('w0')-1).'l'
+			let pat = '\%('. pat. '\m\)\ze\&\%>'.(line('w0')-1).'l'.a:char
 		endif
 		let s:matchid = matchadd('IncSearch', pat)
 		redraw!
@@ -399,7 +409,7 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 				let off .= op_off[1]
 			endif
 
-			let pat1 = (a:fwd ? pat : escape(pat, '?'))
+			let pat1 = (a:fwd ? escape(pat, '/') : escape(pat, '?'))
 			let res = cmd.pat1.off."\<cr>"
 		endif
 
