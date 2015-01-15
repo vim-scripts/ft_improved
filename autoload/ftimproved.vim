@@ -1,8 +1,8 @@
 " ftimproved.vim - Better f/t command for Vim
 " -------------------------------------------------------------
-" Version:	   0.8
+" Version:	   0.9
 " Maintainer:  Christian Brabandt <cb@256bit.org>
-" Last Change: Thu, 27 Mar 2014 23:22:01 +0100
+" Last Change: Thu, 15 Jan 2015 21:40:10 +0100
 " Script:  http://www.vim.org/scripts/script.php?script_id=3877
 " Copyright:   (c) 2009 - 2013  by Christian Brabandt
 "			   The VIM LICENSE applies to ft_improved.vim 
@@ -10,7 +10,7 @@
 "			   instead of "Vim".
 "			   No warranty, express or implied.
 "	 *** ***   Use At-Your-Own-Risk!   *** ***
-" GetLatestVimScripts: 3877 8 :AutoInstall: ft_improved.vim
+" GetLatestVimScripts: 3877 9 :AutoInstall: ft_improved.vim
 "
 " Functions:
 let s:cpo= &cpo
@@ -44,8 +44,9 @@ endfun
 
 fun! <sid>DebugOutput(string) "{{{1
 	if s:debug
-		echo strtrans(a:string)
+		echom strtrans(a:string)
 	endif
+	return a:string
 endfun
 fun! <sid>Opposite(char) "{{{1
 	if a:char == '/' || a:char =~ '[ft]'
@@ -90,17 +91,10 @@ fun! <sid>ColonPattern(cmd, pat, off, f, fwd) "{{{1
 	elseif a:cmd == 'F'
 		let cmd = '?'
 	endif
-	if a:fwd
-		let s:colon[';'] = cmd[-1:]. pat. 
-			\ (empty(a:off) ? cmd[-1:] : a:off)
-		let s:colon[','] = cmd[:-2]. opp. pat.
-			\ (empty(a:off) ? opp : opp_off . a:off[1])
-	else
-		let s:colon[','] = cmd[-1:]. pat. 
-			\ (empty(a:off) ? cmd[-1:] : a:off)
-		let s:colon[';'] = cmd[:-2]. opp. pat.
-			\ (empty(a:off) ? opp : opp_off . a:off[1])
-	endif
+	let s:colon[';'] = cmd[-1:]. pat. 
+		\ (empty(a:off) ? cmd[-1:] : a:off)
+	let s:colon[','] = cmd[:-2]. opp. pat.
+		\ (empty(a:off) ? opp : opp_off . a:off[1])
 	let s:colon['cmd'] = a:f
 endfun
 
@@ -117,14 +111,28 @@ fun! <sid>HighlightMatch(char, dir) "{{{1
 		let output = matchstr(a:char, '^\%(\\c\)\?\\V\zs.*')
 		" remove escaping for display
 		let output = substitute(output, '\\\\', '\\', 'g')
+		let pos    = [line('.'), col('.')]
 		if a:dir
-			let pat = '\%(\%>'. col('.'). 'c\&\%'. line('.'). 'l'
-			let pat .= '\|\%>'. line('.'). 'l\)'. a:char
+			" If a count has been given, first move to the count'th match and
+			" then highlight all matches after that (the count works only for
+			" the first entered char
+			while s:count > 1
+				" skip that many matches
+				let pos = searchpos(a:char, 'eW')
+				let s:count -= 1
+			endw
+
+			let pat = '\%(\%>'. pos[1]. 'c\&\%'. pos[0]. 'l'
+			let pat .= '\|\%>'. pos[0]. 'l\)'. a:char
 			" Make sure, it only matches within the current viewport
 			let pat = '\%('. pat. '\m\)\ze\&\%<'.(line('w$')+1).'l'.a:char
 		else
-			let pat = '\%(\%<'. col('.'). 'c\&\%'. line('.'). 'l'
-			let pat .= '\|\%<'. line('.'). 'l\)'. a:char
+			while s:count > 1
+				let pos = searchpos(a:char, 'bW')
+				let s:count -= 1
+			endw
+			let pat = '\%(\%<'. pos[1]. 'c\&\%'. pos[0]. 'l'
+			let pat .= '\|\%<'. pos[0]. 'l\)'. a:char
 			" Make sure, it only matches within the current viewport
 			let pat = '\%('. pat. '\m\)\ze\&\%>'.(line('w0')-1).'l'.a:char
 		endif
@@ -158,23 +166,7 @@ fun! <sid>CheckSearchWrap(pat, fwd, cnt) "{{{1
 	return 0
 endfun
 
-fun! <sid>Map(lhs, rhs) "{{{1
-	if !hasmapto(a:rhs, 'nxo')
-		for mode in split('nxo', '\zs')
-			exe mode. "noremap <silent> <expr> <unique>" a:lhs
-					\ substitute(a:rhs, 'X', '"'.mode.'"', '')
-		endfor
-	endif
-endfun
 
-fun! <sid>Unmap(lhs) "{{{1
-	"if hasmapto('ftimproved#FTCommand', 'nov')
-	if !empty(maparg(a:lhs, 'nov'))
-		exe "nunmap" a:lhs
-		exe "xunmap" a:lhs
-		exe "ounmap" a:lhs
-	endif
-endfun
 
 fun! <sid>CountMatchesWin(pat, forward) "{{{1
 	" Return number of matches of pattern window start and cursor (backwards)
@@ -224,6 +216,16 @@ fun! ftimproved#ColonCommand(f, mode) "{{{1
 	endif
 	let res = ''
 	let res = (empty(s:colon[fcmd]) ? fcmd : s:colon[fcmd])
+
+	if get(g:, 'ft_improved_consistent_comma', 0)
+		let fcmd = (a:f ? ',' : ';')
+		if (a:f && res[0] !=? '/')
+			let res = (empty(s:colon[fcmd]) ? fcmd : s:colon[fcmd])
+		elseif (!a:f && res[0] !=? '?')
+			let res = (empty(s:colon[fcmd]) ? fcmd : s:colon[fcmd])
+		endif
+	endif
+	let oldsearchpat = @/
 	if a:mode =~ 'o' &&
 		\ s:colon['cmd'] " last search was 'f' command
 		" operator pending. For f cmd, make sure the motion is inclusive
@@ -265,8 +267,11 @@ fun! ftimproved#ColonCommand(f, mode) "{{{1
 	endif
 	" Ctrl-C should be a noop
 	let res = (empty(res) ? s:escape : res."\n")
-	call <sid>DebugOutput(res)
-	return res
+	if a:mode != 'o' && v:operator != 'c'
+		let res .= ":\<C-U>call histdel('/', -1)\<cr>".
+			\ ":\<C-U>let @/='". oldsearchpat. "'\<cr>"
+	endif
+	return <sid>DebugOutput(res)
 endfun
 
 fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
@@ -277,10 +282,14 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 		let char = nr2char(getchar())
 		if  char == s:escape
 			" abort when Escape has been hit
-			return char
+			return <sid>DebugOutput(char)
 		elseif empty(char) || char ==? "\x80\xFD\x60" "CursorHoldEvent"
-			return s:escape
+			return <sid>DebugOutput(s:escape)
 		endif
+		" Use a script local var, so that you can use 3fi (and afterwards
+		" further redefine the search term, without skipping the next 2
+		" matching patterns!
+		let s:count   = v:count1
 		let orig_char = char
 		let char  = <sid>EscapePat(char, 1)
 		" ignore case of pattern? Does only work with search, not with original
@@ -309,7 +318,7 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 
 				if matches == 0
 					" no match within the windows viewport, abort
-					return s:escape
+					return <sid>DebugOutput(s:escape)
 				elseif matches == 1
 					break
 				endif
@@ -322,16 +331,16 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 				endif
 				if !search(char, (a:fwd ? '' : 'b'). 'Wn')
 					" Pattern not found, abort
-					return s:escape
+					return <sid>DebugOutput(s:escape)
 				endif
 				" Get next character
 				let next = getchar()
 			endw
 			if nr2char(next) == s:escape
 				" abort when Escape has been hit
-				return s:escape
+				return <sid>DebugOutput(s:escape)
 			elseif empty(next) || next ==? "\x80\xFD\x60" "CursorHold Event"
-				return s:escape
+				return <sid>DebugOutput(s:escape)
 			endif
 		endif
 		let oldsearchpat = @/
@@ -346,7 +355,7 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 				let cmd = (a:f ? 'f' : 't')
 				call <sid>ColonPattern(<sid>SearchForChar(cmd),
 						\ pat, '', a:f, a:fwd)
-				return cmd.orig_char
+				return <sid>DebugOutput(cmd.orig_char)
 
 			elseif search(matchstr(pat.'\C', '^\%(\\c\)\?\zs.*'), 'bnW') == line('.')
 				\ && !a:fwd
@@ -354,7 +363,7 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 				let cmd = (a:f ? 'F' : 'T')
 				call <sid>ColonPattern(<sid>SearchForChar(cmd),
 						\ pat, '', a:f, a:fwd)
-				return cmd.orig_char
+				return <sid>DebugOutput(cmd.orig_char)
 			endif
 		endif
 
@@ -364,7 +373,7 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 			" return ESC
 			call <sid>ColonPattern(<sid>SearchForChar(cmd),
 					\ pat, '', a:f, a:fwd)
-			return s:escape
+			return <sid>DebugOutput(s:escape)
 		endif
 
 		let cnt  = v:count1
@@ -428,107 +437,19 @@ fun! ftimproved#FTCommand(f, fwd, mode) "{{{1
 		" If operator is c, don't switch to normal mode after the
 		" command, else we would lose the repeatability using '.'
 		" (e.g. cf,foobar<esc> is not repeatable anymore)
-		if a:mode != 'o' && v:operator != 'c'
-		    if v:operator == 'c'
-			    let mode = "\<C-\>\<C-O>"
-		    else
-			    let mode = "\<C-\>\<C-N>"
-		    endif
-		    let post_cmd = (a:mode == 'o' ? mode : '').
-			    \ ":\<C-U>call histdel('/', -1)\<cr>".
-			    \ (a:mode == 'o' ? mode : '').
-			    \ ":\<C-U>let @/='". oldsearchpat. "'\<cr>"
+		if a:mode != 'o' || (a:mode == 'o' && v:operator != 'c')
+		    let post_cmd = ":\<C-U>call histdel('/', -1)\<cr>".
+						 \ ":\<C-U>let @/='". oldsearchpat. "'\<cr>"
 		endif
 
 		" For visual mode, the :Ex commands exit the visual selection, so need
 		" to reselect it
-		call <sid>DebugOutput(res.post_cmd. ((a:mode ==? 'x' && mode() !~ '[vV]') ? 'gv' : ''))
-		return res.post_cmd. (a:mode ==? 'x' ? 'gv' : '')
-		"return res. ":let @/='".oldsearchpat."'\n"
+		return <sid>DebugOutput(res.post_cmd. ((a:mode ==? 'x') ? 'gv' : ''))
 	finally 
 		call <sid>HighlightMatch('', a:fwd)
 	endtry
 endfun
 
-fun! ftimproved#Activate(enable) "{{{1
-	if a:enable
-		" Disable the remapping of those keys by the yankring plugin
-		" and reload the Yankring plugin
-		" github issue #1
-		let g:yr_mapped = [0, 0]
-		if exists("g:loaded_yankring") &&
-			\ g:loaded_yankring > 1
-			" should make sure, the user didn't set this variable to simply
-			" deactivate the plugin. If so, he probably only set it to 1...
-			if exists(":YRToggle") == 2
-				" turn off and on again yankring
-				" first turn off with the original values of the variables,
-				" so everything is disabled correctly
-				sil YRToggle 0
-				" now adjust the Yankring options
-				if g:yankring_zap_keys =~# "[ft]"
-					let g:yankring_zap_keys =
-								\ substitute(g:yankring_zap_keys,
-								\ '\c[ft] ', "", "g")
-					let g:yr_mapped[0] = 1
-				endif
-				if g:yankring_o_keys =~ "[,;]"
-					let g:yankring_o_keys =
-								\ substitute(g:yankring_o_keys, '[,;] ',
-								\ "", "g")
-					let g:yr_mapped[1] = 1
-				endif
-				" enable the plugin again
-				sil YRToggle 1
-			endif
-		else
-			" YankRing wasn't loaded yet, so init those variables
-			let g:yankring_zap_keys = "/ ?"
-			let g:yankring_o_keys  = 'b B w W e E d h j k l H M L y G ^ 0 $'
-			let g:yankring_o_keys .= ' g_  g^ gm g$ gk gj gg ge gE - + _ '
-			let g:yankring_o_keys .= ' iw iW aw aW as is ap ip a] a[ i] i['
-			let g:yankring_o_keys .= ' a) a( ab i) i( ib a> a< i> i< at it'
-			let g:yankring_o_keys .= ' a} a{ aB i} i{ iB a" a'' a` i" i'' i`'
-		endif
-		" f,F,t,T should be unmaped now, so we can map it.
-		call <sid>Map('f', 'ftimproved#FTCommand(1,1,X)')
-		call <sid>Map('F', 'ftimproved#FTCommand(1,0,X)')
-		call <sid>Map('t', 'ftimproved#FTCommand(0,1,X)')
-		call <sid>Map('T', 'ftimproved#FTCommand(0,0,X)')
-		call <sid>Map(';', 'ftimproved#ColonCommand(1,X)')
-		call <sid>Map(',', 'ftimproved#ColonCommand(0,X)')
-	else
-		call <sid>Unmap('f')
-		call <sid>Unmap('F')
-		call <sid>Unmap('t')
-		call <sid>Unmap('T')
-		call <sid>Unmap(',')
-		call <sid>Unmap(';')
-		if exists("g:loaded_yankring") &&
-			\ g:loaded_yankring > 1
-			" should make sure, the user didn't set this variable to simply
-			" deactivate the plugin. If so, he probably only set it to 1...
-			if exists(":YRToggle") == 2
-				" turn off and on again yankring
-				sil YRToggle 0
-				" reset the yankring options
-				if g:yr_mapped[0]
-					let g:yankring_zap_keys .= 'f F t T '
-				else
-					unlet! g:yankring_zap_keys
-				endif
-				if g:yr_mapped[1]
-					let g:yankring_o_keys .= ', ; '
-				else
-					unlet! g:yankring_o_keys
-				endif
-
-				" enable Yankring, and reload the YankRing
-				sil YRToggle 1
-			endif
-		endif
-	endif
-endfun
 
 " Restore: "{{{1
 let &cpo=s:cpo
